@@ -21,7 +21,10 @@
     <ClCompile Include="main.cpp">
       <Filter>Source</Filter>
     </ClCompile>
-    <ClCompile Include="asmBoi.cpp">
+    <ClCompile Include="asmBoiParse.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
+    <ClCompile Include="asmBoiEval.cpp">
       <Filter>Source</Filter>
     </ClCompile>
   </ItemGroup>

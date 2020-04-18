@@ -25,6 +25,7 @@ struct Expression {
 	int16_t val;
 	Expression(byte cmd, byte scr1, byte scr2, byte dest, int16_t _val);
 	Expression(byte cmd, byte scr1, byte dest, int16_t _val);
+	Expression(byte cmd, byte scr1, int16_t _val);
 	Expression(byte cmd, int16_t _val);
 	boi::Cmd get_cmd();
 	boi::Reg get_src1();
@@ -44,6 +45,6 @@ private:
 	int16_t regT;
 	size_t program_counter;
 	std::vector<Expression> lines;
-	std::vector<std::pair<std::string, size_t>> labels;
+	std::vector<std::pair<std::string, int16_t>> labels;
 };
 
