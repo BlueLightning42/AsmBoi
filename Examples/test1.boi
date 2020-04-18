@@ -1,0 +1,9 @@
+mov 10 T
+mov 1 A
+mov 0 B
+fib:
+  put A
+  add A B A
+  sub A B B
+  sub T 1 T
+  jmc fib
