@@ -1,0 +1,11 @@
+; nonsense program to step through
+mov 5 A
+mul A 3 B
+div B A T
+jma T
+put 1
+put 2
+put 3
+put 4
+put 5
+put 6

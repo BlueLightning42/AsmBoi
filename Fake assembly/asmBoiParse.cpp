@@ -3,26 +3,23 @@
 
 using byte = unsigned char;
 
-Expression::Expression(byte cmd, byte scr1, byte scr2, byte dest, int16_t _val) : val(_val) {
-    // 000cccc222111ddd
-    op_code = dest & 0b0000000000000111;
-    op_code |= (scr1 << 3) & 0b0000000000111000;
-    op_code |= (scr2 << 6) & 0b0000000111000000;
-    op_code |= (cmd << 9) & 0b0001111000000000;
+Expression::Expression(byte _cmd, byte _src1, byte _src2, byte _dest, int16_t _val) : val(_val) {
+    this->dest = (boi::Reg)(_dest & 0b111);
+	this->src1 = (boi::Reg)(_src1 & 0b111);
+	this->src2 = (boi::Reg)(_src2 & 0b111);
+    this->cmd =  (boi::Cmd)(_cmd & 0b1111);
 }
-Expression::Expression(byte cmd, byte scr1, byte dest, int16_t _val) : val(_val) {
-    // 000cccc222111ddd
-    op_code = dest & 0b0000000000000111;
-    op_code |= (scr1 << 3) & 0b0000000000111000;
-    op_code |= (cmd << 9) & 0b0001111000000000;
+Expression::Expression(byte _cmd, byte _src1, byte _dest, int16_t _val) : val(_val), src2(boi::NUL) {
+	this->dest = (boi::Reg)(_dest & 0b111);
+	this->src1 = (boi::Reg)(_src1 & 0b111);
+	this->cmd = (boi::Cmd)(_cmd & 0b1111);
 }
-Expression::Expression(byte cmd, byte scr1, int16_t _val) : val(_val) {
-	// 000cccc222111ddd
-	op_code = (scr1 << 3) & 0b0000000000111000;
-	op_code |= (cmd << 9) & 0b0001111000000000;
+Expression::Expression(byte _cmd, byte _src1, int16_t _val) : val(_val), src2(boi::NUL), dest(boi::NUL) {
+	this->src1 = (boi::Reg)(_src1 & 0b111);
+	this->cmd = (boi::Cmd)(_cmd & 0b1111);
 }
-Expression::Expression(byte cmd, int16_t _val) : val(_val) {
-	op_code = (cmd << 9) & 0b0001111000000000;
+Expression::Expression(byte _cmd, int16_t _val) : val(_val), src1(boi::NUL), src2(boi::NUL), dest(boi::NUL) {
+	this->cmd = (boi::Cmd)(_cmd & 0b1111);
 }
 
 
@@ -70,15 +67,30 @@ namespace {
 			[&](const char* cmd) {return command == cmd; });
 	}
 	inline bool isACmd1big(const std::string& command) {
-		const std::vector<const char*> cmds_1_long = { "jmp", "jmc", "put" };
+		const std::vector<const char*> cmds_1_long = { "jmp", "jmc", "put", "jma" };
 		return std::any_of(cmds_1_long.begin(), cmds_1_long.end(),
 			[&](const char* cmd) {return command == cmd; });
 	}
 }
 
-//parse
-AsmBoi::AsmBoi(const char* filename): regA(0), regB(0), regT(0) {
+//parse as setup
+AsmBoi::AsmBoi(const char* filename): regA(0), regB(0), regT(0), program_counter(0), show_step(false) {
 	std::ifstream in(filename);
+	parse(in);
+}
+AsmBoi::AsmBoi(std::ifstream& in) : regA(0), regB(0), regT(0), program_counter(0), show_step(false) {
+	parse(in);
+}
+//remake the whole object...
+void AsmBoi::operator()(const char* filename) {
+	std::ifstream in(filename);
+	*this = AsmBoi(in);
+}
+void AsmBoi::operator()(std::ifstream& in) {
+	*this = AsmBoi(in);
+}
+//TODO: split into several inline functions to increase readability.
+void AsmBoi::parse(std::ifstream &in) {
 	int16_t lino = 0;
 	std::string command(3, 'x');
 	boi::Cmd cmd;
@@ -95,70 +107,55 @@ AsmBoi::AsmBoi(const char* filename): regA(0), regB(0), regT(0) {
 		//extract labels
 		if (found != std::string::npos) {
 			std::string label(line, 0, found); // line[:found:]
-			labels.emplace_back(label, lino+1);
+			labels.emplace_back(label, lino);
 			line.erase(0, found + 1);
-			fmt::print("\nlabel: '{}' on line: {} rest: '{}'", label, lino+1, line);
 		}
 		if (line.size() < 1) continue; //no error empty lines are allowed
 		if (line.size() < 4 || !std::isspace(line[3])) { //error
-			fmt::print("\nError on line: {}\nbad command must be exactly 3 characters", lino);
+			fmt::print(stderr, "\nError on line: {}\nbad command must be exactly 3 characters", lino);
 			break;
 		}
 		lino++;
-		std::transform(line.begin(), line.begin()+3, command.begin(),
+		std::transform(line.begin(), line.begin() + 3, command.begin(),
 			[](unsigned char c) { return std::tolower(c); }); // cmd = line[:3:].lower()
 		// only command operations
 		if (command == "nop") {
-			lines.emplace_back(boi::Cmd::add, 0, boi::Reg::T, boi::Reg::T);
+			lines.emplace_back(boi::Cmd::NOP, -1);
 			continue;
 		}
 		// 1 operand commands
 		found = 3; //command is 3
 		auto opr1 = extractWord(line, found);
-		fmt::print("\nline: {} command: '{}' \topr1: '{}'",lino, command, opr1);
-		if (isACmd1big(command)){
-			if (command == "put") {
+		if (isACmd1big(command)) {
+			if (command == "put" || command == "jma") {
+				if (command == "put") cmd = boi::put;
+				if (command == "jma") cmd = boi::jma;
 				boi::Reg src = parseReg(opr1);
 				int16_t val;
 				if (src == boi::X) {
 					val = std::stoi(opr1);
-				}else {
+				}
+				else {
 					val = 0;
 				}
-				lines.emplace_back(boi::put, src, val);
-			}else {
+				lines.emplace_back(cmd, src, val);
+			}
+			else {
 				if (command == "jmp") cmd = boi::jmp;
 				if (command == "jmc") cmd = boi::jmc;
 				auto val = find_if(labels.begin(), labels.end(),
 					[&opr1](std::pair<std::string, int16_t> l) { return l.first == opr1; });
 				if (val == labels.end()) {
-					fmt::print("\nTried to jump to a label that doesnt exist\n");
+					fmt::print(stderr, "\nTried to jump to a label that doesnt exist\n");
 					break;
 				}
-				fmt::print(" Jump to line: {} ", val->second);
 				lines.emplace_back(cmd, val->second);
 			}
 			continue;
 		}
 		// 2 operand commands
-		auto opr2 = extractWord(line, found); 
-		fmt::print(" \topr2: '{}'", opr2);
+		auto opr2 = extractWord(line, found);
 		if (command == "mov") {
-			int16_t val;
-			boi::Reg src = parseReg(opr1);
-			if (src == boi::X) {
-				val = std::stoi(opr1);
-			}else {
-				val = 0;
-			}
-			boi::Reg dest = parseReg(opr2); //if x than noop
-			lines.emplace_back(boi::Cmd::mov, src, dest, val);
-			continue;
-		}
-		// 3 operand commands
-		auto opr3 = extractWord(line, found);
-		fmt::print(" \topr3: '{}'", opr3);
-		if (isACmd3big(command)) {
 			int16_t val;
 			boi::Reg src = parseReg(opr1);
 			if (src == boi::X) {
@@ -171,7 +168,37 @@ AsmBoi::AsmBoi(const char* filename): regA(0), regB(0), regT(0) {
 			lines.emplace_back(boi::Cmd::mov, src, dest, val);
 			continue;
 		}
+		// 3 operand commands
+		auto opr3 = extractWord(line, found);
+		if (isACmd3big(command)) {
+			if (command == "add") cmd = boi::add;
+			if (command == "sub") cmd = boi::sub;
+			if (command == "div") cmd = boi::div;
+			if (command == "mul") cmd = boi::mul;
+			if (command == "mod") cmd = boi::mod;
+			int16_t val;
+			boi::Reg src = parseReg(opr1);
+			boi::Reg src2 = parseReg(opr2); //if x than noop
+			boi::Reg dest = parseReg(opr3); //if x than noop
+			if (dest == boi::X) {
+				lines.emplace_back(boi::NOP, -1 * cmd);
+				break;
+			}
+			if (src == boi::X) {
+				if (src2 == boi::X) {
+					fmt::print(stderr, "both operands are integer values- consider using a mov?");
+					break;
+				}
+				val = std::stoi(opr1);
+			}
+			else if (src2 == boi::X) {
+				val = std::stoi(opr2);
+			}
+			else {
+				val = 0;
+			}
+			lines.emplace_back(cmd, src, src2, dest, val);
+			continue;
+		}
 	}
-	fmt::print("\nLoaded");
-	program_counter = 0;
 }
